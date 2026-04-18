@@ -3,8 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""This sub-module contains the functions that are specific to the environment."""
+"""RL Agent 配置子模块."""
 
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+from .rsl_rl_ppo_cfg import PPORunnerCfg
 
-from .rewards import *  # noqa: F401, F403
+__all__ = ["PPORunnerCfg"]

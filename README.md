@@ -1,135 +1,72 @@
-# Template for Isaac Lab Projects
+# Franka Panda Push-T
 
-## Overview
+IsaacLab 环境下基于强化学习的 Franka Panda 机械臂推动 T 型块任务。
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+## 任务描述
 
-**Key Features:**
+训练机械臂将桌面上的 T 形方块推动到目标位置并对齐角度。
 
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
+## 项目结构
 
-**Keywords:** extension, template, isaaclab
+```
+push_T/
+├── assets/                    # USD 资源文件
+│   ├── block_T.usd           # T 型块模型
+│   └── target.usd            # 目标标记模型
+├── source/push_T/push_T/tasks/manager_based/franka_panda/
+│   ├── franka_panda_env_cfg.py   # 环境配置
+│   ├── agents/rsl_rl_ppo_cfg.py  # PPO 算法配置
+│   └── mdp/rewards.py            # 自定义奖励函数
+├── scripts/rsl_rl/
+  ├── train.py             # 训练脚本
+  └── play.py              # 演示脚本
 
-## Installation
-
-- Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
-  We recommend using the conda installation as it simplifies calling Python scripts from the terminal.
-
-- Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
-
-- Using a python interpreter that has Isaac Lab installed, install the library in editable mode using:
-
-    ```bash
-    # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/push_T
-
-- Verify that the extension is correctly installed by:
-
-    - Listing the available tasks:
-
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/list_envs.py
-        ```
-
-    - Running a task:
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/<RL_LIBRARY>/train.py --task=<TASK_NAME>
-        ```
-
-    - Running a task with dummy agents:
-
-        These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly.
-
-        - Zero-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/zero_agent.py --task=<TASK_NAME>
-            ```
-        - Random-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/random_agent.py --task=<TASK_NAME>
-            ```
-
-### Set up IDE (Optional)
-
-To setup the IDE, please follow these instructions:
-
-- Run VSCode Tasks, by pressing `Ctrl+Shift+P`, selecting `Tasks: Run Task` and running the `setup_python_env` in the drop down menu.
-  When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.
-
-If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
-The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
-This helps in indexing all the python modules for intelligent suggestions while writing code.
-
-### Setup as Omniverse Extension (Optional)
-
-We provide an example UI extension that will load upon enabling your extension defined in `source/push_T/push_T/ui_extension_example.py`.
-
-To enable your extension, follow these steps:
-
-1. **Add the search path of this project/repository** to the extension manager:
-    - Navigate to the extension manager using `Window` -> `Extensions`.
-    - Click on the **Hamburger Icon**, then go to `Settings`.
-    - In the `Extension Search Paths`, enter the absolute path to the `source` directory of this project/repository.
-    - If not already present, in the `Extension Search Paths`, enter the path that leads to Isaac Lab's extension directory directory (`IsaacLab/source`)
-    - Click on the **Hamburger Icon**, then click `Refresh`.
-
-2. **Search and enable your extension**:
-    - Find your extension under the `Third Party` category.
-    - Toggle it to enable your extension.
-
-## Code formatting
-
-We have a pre-commit template to automatically format your code.
-To install pre-commit:
-
-```bash
-pip install pre-commit
 ```
 
-Then you can run pre-commit with:
+## 环境配置
 
-```bash
-pre-commit run --all-files
-```
+### 依赖
 
-## Troubleshooting
+- IsaacLab
+- Python 3.10+
+- PyTorch
+- IsaacLab_rl
+- rsl_rl_lib
 
-### Pylance Missing Indexing of Extensions
+### 训练参数
 
-In some VsCode versions, the indexing of part of the extensions is missing.
-In this case, add the path to your extension in `.vscode/settings.json` under the key `"python.analysis.extraPaths"`.
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| --num_envs | 4096 | 并行环境数 |
+| --max_iterations | 5000 | 训练轮数 |
+| --headless | False | 无头模式运行 |
+| --video | False | 录制视频 |
 
-```json
-{
-    "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/push_T"
-    ]
-}
-```
+## 任务配置
 
-### Pylance Crash
+### 奖励函数
 
-If you encounter a crash in `pylance`, it is probable that too many files are indexed and you run out of memory.
-A possible solution is to exclude some of omniverse packages that are not used in your project.
-To do so, modify `.vscode/settings.json` and comment out packages under the key `"python.analysis.extraPaths"`
-Some examples of packages that can likely be excluded are:
+| 奖励项 | 权重 | 说明 |
+|--------|------|------|
+| reaching_object | -2.0 | 指尖到 T 型块距离 |
+| object_to_target_pos | -20.0 | T 型块到目标距离 |
+| object_to_target_rot | -1.0 | T 型块旋转对齐 |
+| success_bonus | 10000.0 | 成功完成奖励 |
+| action_rate_penalty | -0.01 | 动作平滑惩罚 |
 
-```json
-"<path-to-isaac-sim>/extscache/omni.anim.*"         // Animation packages
-"<path-to-isaac-sim>/extscache/omni.kit.*"          // Kit UI tools
-"<path-to-isaac-sim>/extscache/omni.graph.*"        // Graph UI tools
-"<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
-...
-```
+### 成功判定
+
+- 位置阈值: 0.12 m
+- 旋转阈值: 0.50 rad
+- Episode 长度: 20 秒
+
+### PPO 配置
+
+| 参数 | 值 |
+|------|-----|
+| learning_rate | 5.0e-4 |
+| entropy_coef | 0.005 |
+| gamma | 0.99 |
+| lam | 0.95 |
+| actor_hidden_dims | [256, 256, 128] |
+| critic_hidden_dims | [256, 256, 128] |

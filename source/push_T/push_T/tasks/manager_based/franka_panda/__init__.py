@@ -3,21 +3,23 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+"""Franka Panda Push-T 环境子模块."""
+
 import gymnasium as gym
 
 from . import agents
 
 ##
-# Register Gym environments.
+# 注册 Gym 环境
 ##
 
 
 gym.register(
-    id="Template-Push-T-v0",
+    id="Template-Franka-Panda-Push-T-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.push_t_env_cfg:PushTEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.franka_panda_env_cfg:FrankaPandaEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )
