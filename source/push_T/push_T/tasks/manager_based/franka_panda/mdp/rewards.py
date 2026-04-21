@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Franka Panda Push-T 任务的自定义奖励函数."""
+"""Franka Panda Push-T 任务的自定义奖励函数 - 末端位置控制版本."""
 
 from __future__ import annotations
 
@@ -24,24 +24,6 @@ def end_effector_pos(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch
     return asset.data.body_state_w[:, asset_cfg.body_ids, :3].squeeze(1)
 
 
-def link_asset_completion(
-    env: ManagerBasedRLEnv,
-    assetA_cfg: SceneEntityCfg,
-    assetB_cfg: SceneEntityCfg,
-    threshold: float,
-) -> torch.Tensor:
-    """两个资产之间完成链接的奖励."""
-    assetA: Articulation = env.scene[assetA_cfg.name]
-    assetB: RigidObject = env.scene[assetB_cfg.name]
-
-    pos_A = assetA.data.body_state_w[:, assetA_cfg.body_ids, :3]
-    pos_B = assetB.data.root_state_w[:, :3]
-
-    distance = torch.norm(pos_A - pos_B, dim=1)
-
-    return (distance < threshold).float()
-
-
 def object_ee_distance(
     env: ManagerBasedRLEnv,
     object_cfg: SceneEntityCfg,
@@ -57,23 +39,20 @@ def object_ee_distance(
     return torch.norm(ee_pos - obj_pos, dim=1)
 
 
-def object_fingers_distance(
-    env: ManagerBasedRLEnv,
-    object_cfg: SceneEntityCfg,
-    fingers_cfg: SceneEntityCfg,
-) -> torch.Tensor:
-    """物体到两个手指中点的距离."""
-    robot: Articulation = env.scene[fingers_cfg.name]
-    obj: RigidObject = env.scene[object_cfg.name]
+def gaussian_reward(distance: torch.Tensor, sigma: float = 0.1) -> torch.Tensor:
+    """高斯核奖励：靠近时奖励快速增加，远距离时平滑衰减。
 
-    # 获取两个手指的位置，取中点
-    fingers_pos = robot.data.body_state_w[:, fingers_cfg.body_ids, :3]  # (num_envs, 2, 3)
-    fingertips_pos = fingers_pos.mean(dim=1)  # (num_envs, 3)
-    obj_pos = obj.data.root_state_w[:, :3]
-
-    return torch.norm(fingertips_pos - obj_pos, dim=1)
+    Reward = exp(-distance^2 / (2 * sigma^2))
+    """
+    return torch.exp(-distance ** 2 / (2 * sigma ** 2))
 
 
+def exp_decay_reward(distance: torch.Tensor, k: float = 5.0) -> torch.Tensor:
+    """指数衰减奖励：靠近时奖励快速增加。
+
+    Reward = exp(-k * distance)
+    """
+    return torch.exp(-k * distance)
 
 
 def object_target_distance(
@@ -103,53 +82,14 @@ def object_target_rotation_diff(
     obj_quat = obj.data.root_state_w[:, 3:7]
     target_quat = target.data.root_state_w[:, 3:7]
 
-    # 计算四元数差异
-    # 使用 q1 * conj(q2) 得到相对旋转
     relative_quat = quat_mul(obj_quat, quat_conjugate(target_quat))
 
-    # 从相对旋转中提取角度 (2*acos(|w|) for small angles)
-    # 对于小角度，可以近似为 2*asin(||v||) 其中 v 是虚部
     angle = 2.0 * torch.atan2(
         torch.norm(relative_quat[:, 1:], dim=1),
         torch.abs(relative_quat[:, 0])
     )
 
     return angle
-
-
-def object_target_position_rot_distance(
-    env: ManagerBasedRLEnv,
-    object_cfg: SceneEntityCfg,
-    target_cfg: SceneEntityCfg,
-    position_threshold: float = 0.05,
-    rotation_threshold: float = 0.2,
-) -> torch.Tensor:
-    """判断物体是否到达目标位置和姿态.
-
-    返回一个奖励值：1.0表示成功对齐，0.0表示未对齐。
-    """
-    obj: RigidObject = env.scene[object_cfg.name]
-    target: RigidObject = env.scene[target_cfg.name]
-
-    # 位置距离
-    obj_pos = obj.data.root_state_w[:, :3]
-    target_pos = target.data.root_state_w[:, :3]
-    pos_distance = torch.norm(obj_pos - target_pos, dim=1)
-
-    # 旋转差异
-    obj_quat = obj.data.root_state_w[:, 3:7]
-    target_quat = target.data.root_state_w[:, 3:7]
-    relative_quat = quat_mul(obj_quat, quat_conjugate(target_quat))
-    rot_distance = 2.0 * torch.atan2(
-        torch.norm(relative_quat[:, 1:], dim=1),
-        torch.abs(relative_quat[:, 0])
-    )
-
-    # 判断是否成功
-    pos_success = pos_distance < position_threshold
-    rot_success = rot_distance < rotation_threshold
-
-    return (pos_success & rot_success).float()
 
 
 def is_success(
@@ -163,12 +103,10 @@ def is_success(
     obj: RigidObject = env.scene[object_cfg.name]
     target: RigidObject = env.scene[target_cfg.name]
 
-    # 位置距离
     obj_pos = obj.data.root_state_w[:, :3]
     target_pos = target.data.root_state_w[:, :3]
     pos_distance = torch.norm(obj_pos - target_pos, dim=1)
 
-    # 旋转差异
     obj_quat = obj.data.root_state_w[:, 3:7]
     target_quat = target.data.root_state_w[:, 3:7]
     relative_quat = quat_mul(obj_quat, quat_conjugate(target_quat))
@@ -177,7 +115,6 @@ def is_success(
         torch.abs(relative_quat[:, 0])
     )
 
-    # 判断是否成功
     pos_success = pos_distance < position_threshold
     rot_success = rot_distance < rotation_threshold
 
@@ -191,5 +128,5 @@ def root_height_below_minimum(
 ) -> torch.Tensor:
     """判断物体高度是否低于最小阈值."""
     obj: RigidObject = env.scene[asset_cfg.name]
-    obj_pos = obj.data.root_state_w[:, 2]  # Z轴高度
+    obj_pos = obj.data.root_state_w[:, 2]
     return (obj_pos < minimum_height)

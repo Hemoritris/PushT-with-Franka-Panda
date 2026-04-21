@@ -137,7 +137,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     ppo_runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
-    ppo_runner.load(resume_path)
+    # 检查是否是BC预训练模型（没有optimizer_state_dict）
+    checkpoint = torch.load(resume_path, weights_only=False)
+    is_bc_model = "optimizer_state_dict" not in checkpoint or len(checkpoint["optimizer_state_dict"]) == 0
+
+    if not is_bc_model:
+        # 标准RL checkpoint，包含完整状态
+        ppo_runner.load(resume_path)
+        policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
+    else:
+        # BC预训练模型，只加载策略权重和normalizer，跳过obs_normalizer
+        print("[INFO] BC预训练模型，使用简化的策略函数")
+        ppo_runner.alg.policy.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        # 构建简化的策略函数：不经过obs_normalizer（BC模型输入已经是归一化观测）
+        def bc_policy(x):
+            return ppo_runner.alg.policy.act_inference(x)
+        policy = bc_policy
+        print("[INFO] 模型加载完成")
 
     # obtain the trained policy for inference
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
