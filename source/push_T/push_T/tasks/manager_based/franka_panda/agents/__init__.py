@@ -3,8 +3,6 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""RL Agent 配置子模块."""
+"""Agent 配置子模块（当前任务未启用 RL agent 配置导出）."""
 
-from .rsl_rl_ppo_cfg import PPORunnerCfg
-
-__all__ = ["PPORunnerCfg"]
+__all__ = []

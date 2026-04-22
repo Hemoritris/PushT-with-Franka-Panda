@@ -7,8 +7,6 @@
 
 import gymnasium as gym
 
-from . import agents
-
 ##
 # 注册 Gym 环境
 ##
@@ -19,6 +17,5 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.franka_panda_env_cfg:FrankaPandaEePosEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Franka Panda Push-T 任务配置 - 末端位置控制版本."""
+"""Franka Panda Push-T 任务配置."""
 
 import os
 
@@ -182,11 +182,11 @@ class FrankaPandaEePosSceneTeleopCfg(InteractiveSceneCfg):
 
 @configclass
 class EePosActionsCfg:
-    """MDP 动作规格 - 末端位置控制 (3D位置，固定姿态朝下).
+    """MDP 动作规格 - 末端位置控制 (2D平面位置，固定姿态与高度).
 
     使用自定义 FixedDownIKAction 拦截器：
-    - RL网络只输出3维(x,y,z)
-    - 内部使用绝对位置控制，姿态固定为朝下
+    - 网络只输出 2 维 (x, y)
+    - 内部使用绝对位置控制，姿态固定朝下，z 固定为常量
     - use_relative_mode=False 直接使用传入的绝对位置和固定朝下姿态
     """
 
@@ -199,7 +199,7 @@ class EePosActionsCfg:
             command_type="pose",
             use_relative_mode=False,  # 绝对位置控制
             ik_method="dls",
-            ik_params={"lambda_val": 0.1},  # 增大阻尼，减少抖动
+            ik_params={"lambda_val": 0.2},  # 增大阻尼，减少抖动
         ),
         body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(
             pos=[0.0, 0.0, 0.0],
@@ -211,33 +211,27 @@ class EePosActionsCfg:
 class EePosObservationsCfg:
     """MDP 观察规格 - 末端位置控制版本.
 
-    观测空间 (13维):
-    - T型块位置 (3)
+    观测空间 (8维):
+    - T型块平面位置 (2)
     - T型块旋转四元数 (4)
-    - 目标位置 (3)
-    - 末端执行器当前位置 (3)
+    - 末端执行器平面位置 (2)
 
-    动作空间 (7维):
-    - 末端执行器位置 [x, y, z] (3)
-    - 末端执行器姿态四元数 [qw, qx, qy, qz] (4) - 固定朝下
+    动作空间 (2维):
+    - 末端执行器平面目标 [x, y]
     """
 
     @configclass
     class PolicyCfg(ObsGroup):
-        t_block_position = ObsTerm(
-            func=mdp.root_pos_w,
+        t_block_position_xy = ObsTerm(
+            func=mdp.root_pos_xy_w,
             params={"asset_cfg": SceneEntityCfg("t_block")},
         )
         t_block_orientation = ObsTerm(
             func=mdp.root_quat_w,
             params={"asset_cfg": SceneEntityCfg("t_block")},
         )
-        target_position = ObsTerm(
-            func=mdp.root_pos_w,
-            params={"asset_cfg": SceneEntityCfg("t_block_target")},
-        )
-        end_effector_pos = ObsTerm(
-            func=mdp.end_effector_pos,
+        end_effector_xy = ObsTerm(
+            func=mdp.end_effector_xy,
             params={"asset_cfg": SceneEntityCfg("robot", body_names=["panda_hand"])},
         )
 
@@ -250,60 +244,21 @@ class EePosObservationsCfg:
 
 @configclass
 class EePosRewardsCfg:
-    """MDP 奖励项 - 引导型奖励函数."""
+    """最小奖励配置.
 
-    # 1. 靠近奖励 - 末端执行器到物体的距离
-    ee_to_object_dist = RewTerm(
-        func=mdp.object_ee_distance,
-        weight=-2.0,  # 负值：距离越近奖励越高
-        params={
-            "object_cfg": SceneEntityCfg("t_block"),
-            "ee_cfg": SceneEntityCfg("robot", body_names=["panda_hand"]),
-        },
-    )
+    当前主线是遥操作 + Diffusion 训练，奖励不再用于策略优化，
+    因此仅保留成功奖励用于日志观测和任务完成反馈。
+    """
 
-    # 2. 块到目标的位置奖励
-    object_to_target_pos = RewTerm(
-        func=mdp.object_target_distance,
-        weight=-10.0,  # 负值：距离越近奖励越高
-        params={
-            "object_cfg": SceneEntityCfg("t_block"),
-            "target_cfg": SceneEntityCfg("t_block_target"),
-        },
-    )
-
-    # 3. 块到目标的旋转奖励
-    object_to_target_rot = RewTerm(
-        func=mdp.object_target_rotation_diff,
-        weight=-5.0,  # 负值：旋转差越小奖励越高
-        params={
-            "object_cfg": SceneEntityCfg("t_block"),
-            "target_cfg": SceneEntityCfg("t_block_target"),
-        },
-    )
-
-    # 4. 动作变化惩罚（配合 EMA）
-    action_rate_penalty = RewTerm(
-        func=mdp.action_rate_l2,
-        weight=-0.05,
-    )
-
-    # 5. 关节速度惩罚
-    joint_vel_penalty = RewTerm(
-        func=mdp.joint_vel_l2,
-        weight=-0.01,
-        params={"asset_cfg": SceneEntityCfg("robot")},
-    )
-
-    # 6. 成功激励
     success_bonus = RewTerm(
         func=mdp.is_success,
-        weight=2000.0,
+        weight=1.0,
         params={
             "object_cfg": SceneEntityCfg("t_block"),
             "target_cfg": SceneEntityCfg("t_block_target"),
-            "position_threshold": 0.05,
-            "rotation_threshold": 0.15,
+            # 与 termination.success 阈值保持一致，避免“成功终止但无成功奖励”
+            "position_threshold": 0.02,
+            "rotation_threshold": 0.07,
         },
     )
 
@@ -313,7 +268,7 @@ class EventCfg:
     """事件配置."""
 
     reset_robot = EventTerm(
-        func=mdp.reset_joints_by_offset,
+        func=mdp.reset_robot_ee_xy_random_fixed_z,
         mode="reset",
         params={
             "asset_cfg": SceneEntityCfg(
@@ -321,8 +276,11 @@ class EventCfg:
                 joint_names=["panda_joint1", "panda_joint2", "panda_joint3", "panda_joint4",
                              "panda_joint5", "panda_joint6", "panda_joint7"],
             ),
-            "position_range": (-0.5, 0.5),
-            "velocity_range": (-0.1, 0.1),
+            "x_range": (0.15, 0.7),
+            "y_range": (-0.4, 0.4),
+            "z_fixed": 0.13,
+            "action_term_name": "arm_action",
+            "ik_iterations": 2,
         },
     )
 
@@ -355,8 +313,8 @@ class TerminationsCfg:
         params={
             "object_cfg": SceneEntityCfg("t_block"),
             "target_cfg": SceneEntityCfg("t_block_target"),
-            "position_threshold": 0.10,
-            "rotation_threshold": 0.40,
+            "position_threshold": 0.02,
+            "rotation_threshold": 0.07,
         },
     )
 
@@ -370,8 +328,8 @@ class TerminationsCfg:
 class FrankaPandaEePosEnvCfg(ManagerBasedRLEnvCfg):
     """Franka Panda Push-T RL训练环境配置 - 末端位置控制.
 
-    动作空间: 3D末端执行器位置 (x, y, z)
-    观测空间: 13维 (t_block_pos(3) + t_block_quat(4) + target_pos(3) + ee_pos(3))
+    动作空间: 2D末端执行器平面位置 (x, y)，z 固定
+    观测空间: 8维 (t_block_xy(2) + t_block_quat(4) + ee_xy(2))
     使用高位PD控制，与遥操作一致。
     """
     scene: FrankaPandaEePosSceneTeleopCfg = FrankaPandaEePosSceneTeleopCfg(num_envs=4096, env_spacing=4.0)

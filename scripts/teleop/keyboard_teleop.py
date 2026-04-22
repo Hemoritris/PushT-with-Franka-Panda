@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Keyboard teleoperation script for Franka Panda Push-T - End-Effector Position Control."""
+"""Keyboard teleoperation script for Franka Panda Push-T - End-Effector XY control."""
 
 import argparse
 import sys
@@ -33,17 +33,14 @@ import torch
 import push_T.tasks  # noqa: F401
 
 
-# Key mapping for EE position control (3D)
+# Key mapping for EE position control (2D)
 # W/S - X direction (forward/backward in world frame)
 # A/D - Y direction (left/right)
-# UP/DOWN - Z direction (up/down)
 KEY_POSE_MAP = {
-    pygame.K_w: (1, 0, 0),     # +X (forward)
-    pygame.K_s: (-1, 0, 0),    # -X (backward)
-    pygame.K_a: (0, 1, 0),     # +Y (left)
-    pygame.K_d: (0, -1, 0),    # -Y (right)
-    pygame.K_UP: (0, 0, 1),    # +Z (up)
-    pygame.K_DOWN: (0, 0, -1), # -Z (down)
+    pygame.K_w: (1, 0),     # +X (forward)
+    pygame.K_s: (-1, 0),    # -X (backward)
+    pygame.K_a: (0, 1),     # +Y (left)
+    pygame.K_d: (0, -1),    # -Y (right)
 }
 
 POSE_STEP = 0.005  # EE position step size in meters
@@ -63,7 +60,7 @@ def main():
 
     pygame.init()
     screen = pygame.display.set_mode((600, 400))
-    pygame.display.set_caption("Franka Panda EE Teleop - W/S=X, A/D=Y, UP/DOWN=Z - ESC to quit")
+    pygame.display.set_caption("Franka Panda EE Teleop - W/S=X, A/D=Y - ESC to quit")
     font = pygame.font.Font(None, 24)
 
     # Reset
@@ -74,7 +71,7 @@ def main():
     print("Controls:")
     print("  W/S - Move EE in X (forward/backward)")
     print("  A/D - Move EE in Y (left/right)")
-    print("  UP/DOWN - Move EE in Z (up/down)")
+    print("  Z 轴固定为 0.13")
     print("  SHIFT + direction - Fine control (smaller steps)")
     print("  ESC - Quit and save")
     print("="*60 + "\n")
@@ -88,17 +85,16 @@ def main():
     current_ep_acts = []
     episode_start_time = time.time()
 
-    # 获取初始末端执行器位置
-    # obs["policy"] 形状: [1, 13] - EePos配置
-    # [t_block_pos(3), t_block_quat(4), target_pos(3), ee_pos(3)] = 13
+    # 获取初始末端执行器平面位置
+    # obs["policy"] 形状: [1, 8]
+    # [t_block_xy(2), t_block_quat(4), ee_xy(2)] = 8
     policy_obs = obs["policy"][0].cpu().numpy()
-    ee_pos = policy_obs[-3:]  # 最后3个是end_effector_pos
-    print(f"[INFO] 初始EE位置: {ee_pos}")
+    ee_xy = policy_obs[-2:]  # 最后2个是 end_effector_xy
+    print(f"[INFO] 初始EE平面位置: {ee_xy}")
     print(f"[INFO] 观测维度: {len(policy_obs)}")
 
-    # EE position: [x, y, z] - 3维位置
-    # 姿态由 FixedDownIKAction 自动固定为朝下
-    current_pos = ee_pos.copy().astype(np.float32)
+    # EE position: [x, y] - 2维平面位置，z 由 FixedDownIKAction 固定为常量
+    current_xy = ee_xy.copy().astype(np.float32)
 
     try:
         while simulation_app.is_running():
@@ -114,25 +110,20 @@ def main():
             # Update EE position based on pressed keys
             for key, direction in KEY_POSE_MAP.items():
                 if keys[key]:
-                    current_pos += np.array(direction) * step
+                    current_xy += np.array(direction) * step
 
             # 限制EE位置范围，防止失控（与 FixedDownIKAction 中的范围一致）
-            current_pos[2] = np.clip(current_pos[2], 0.13, 0.5)  # Z范围
-            current_pos[0] = np.clip(current_pos[0], 0.15, 0.7)  # X范围
-            current_pos[1] = np.clip(current_pos[1], -0.4, 0.4)  # Y范围
+            current_xy[0] = np.clip(current_xy[0], 0.15, 0.7)  # X范围
+            current_xy[1] = np.clip(current_xy[1], -0.4, 0.4)  # Y范围
 
-            # Apply action - 将绝对位置转换为 [-1, 1] 范围的action（与FixedDownIKAction配合）
-            # X_RANGE = (0.15, 0.7), Y_RANGE = (-0.4, 0.4), Z_RANGE = (0.13, 0.5)
-            action_normalized = np.zeros(3, dtype=np.float32)
-            action_normalized[0] = (current_pos[0] - 0.15) / (0.7 - 0.15) * 2.0 - 1.0  # X
-            action_normalized[1] = (current_pos[1] - (-0.4)) / (0.4 - (-0.4)) * 2.0 - 1.0  # Y
-            action_normalized[2] = (current_pos[2] - 0.13) / (0.5 - 0.13) * 2.0 - 1.0  # Z
-            action_tensor = torch.from_numpy(action_normalized).float().unsqueeze(0)
+            # Apply action - 直接发送物理坐标 action=[x, y] (meters)
+            action_physical = current_xy.astype(np.float32).copy()
+            action_tensor = torch.from_numpy(action_physical).float().unsqueeze(0)
 
             # Record - 提取policy观测的实际数据
             policy_obs = obs["policy"][0].cpu().numpy()  # [obs_dim]
             current_ep_obs.append(policy_obs)
-            current_ep_acts.append(action_normalized.copy())  # 记录normalized action
+            current_ep_acts.append(action_physical.copy())  # 记录物理坐标 action
 
             # Step
             obs, reward, terminated, truncated, info = env.step(action_tensor)
@@ -142,14 +133,13 @@ def main():
             screen.fill((30, 30, 30))
             texts = [
                 f"Episodes: {episode_count} | Current: {len(current_ep_obs)} steps",
-                f"EE pos: [{current_pos[0]:.3f}, {current_pos[1]:.3f}, {current_pos[2]:.3f}]",
-                f"obs pos: [{policy_obs[10]:.3f}, {policy_obs[11]:.3f}, {policy_obs[12]:.3f}]",
-                f"obs t_pos: [{policy_obs[0]:.3f}, {policy_obs[1]:.3f}, {policy_obs[2]:.3f}]",
-                f"obs t_rot: [{policy_obs[3]:.3f}, {policy_obs[4]:.3f}, {policy_obs[5]:.3f}, {policy_obs[6]:.3f}]",
-                f"obs target_pos: [{policy_obs[7]:.3f}, {policy_obs[8]:.3f}, {policy_obs[9]:.3f}]",
-                f"Obs dim: {len(policy_obs)} | Action dim: 3",
+                f"EE xy: [{current_xy[0]:.3f}, {current_xy[1]:.3f}] | z=0.130",
+                f"obs ee_xy: [{policy_obs[6]:.3f}, {policy_obs[7]:.3f}]",
+                f"obs t_xy: [{policy_obs[0]:.3f}, {policy_obs[1]:.3f}]",
+                f"obs t_quat: [{policy_obs[2]:.3f}, {policy_obs[3]:.3f}, {policy_obs[4]:.3f}, {policy_obs[5]:.3f}]",
+                f"Obs dim: {len(policy_obs)} | Action dim: 2",
                 "",
-                "W/S = X, A/D = Y, UP/DOWN = Z",
+                "W/S = X, A/D = Y",
                 "U = save all episodes",
                 "ESC = quit & save"
             ]
@@ -201,8 +191,8 @@ def main():
                 obs, _ = env.reset()
                 # 获取重置后的EE位置
                 policy_obs = obs["policy"][0].cpu().numpy()
-                ee_pos = policy_obs[-3:]
-                current_pos[:] = ee_pos
+                ee_xy = policy_obs[-2:]
+                current_xy[:] = ee_xy
                 print(f"[INFO] Episode {episode_count} 结束, 累计保存: {total_saved_episodes}")
 
     except Exception as e:
