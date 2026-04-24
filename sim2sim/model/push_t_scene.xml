@@ -1,0 +1,54 @@
+<mujoco model="panda push_t scene">
+  <include file="panda.xml"/>
+
+  <statistic center="0.45 0 0.25" extent="1.1"/>
+
+  <option timestep="0.008333333333" integrator="implicitfast"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <default>
+    <default class="push_t_visual">
+      <geom contype="0" conaffinity="0" group="2" mass="0"/>
+    </default>
+    <default class="push_t_collision">
+      <geom type="box" condim="3" friction="1 0.03 0.003" solref="0.01 1" solimp="0.95 0.99 0.001"
+       density="450" group="3" rgba="0 0 0 0"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <mesh name="t_block_visual_mesh" file="Tcube.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="t_target_visual_mesh" file="target.stl" scale="0.001 0.001 0.001"/>
+    <material name="t_block_visual_mat" rgba="1 0 0 1"/>
+    <material name="t_target_visual_mat" rgba="0 1 0 0.22"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+
+    <body name="t_block" pos="0.3 0 0">
+      <freejoint name="t_block_freejoint"/>
+      <geom name="t_block_visual" type="mesh" mesh="t_block_visual_mesh"
+       material="t_block_visual_mat" class="push_t_visual"
+       pos="-0.002509151 0.004868225 0"/>
+      <geom name="t_block_bar" class="push_t_collision" pos="0 0.03 0.02" size="0.06 0.015 0.02"/>
+      <geom name="t_block_stem" class="push_t_collision" pos="0 -0.015 0.02" size="0.015 0.03 0.02"/>
+    </body>
+
+    <body name="t_block_target" pos="0.45 0 0" quat="0.70710678 0 0 0.70710678">
+      <geom name="t_target_visual" type="mesh" mesh="t_target_visual_mesh"
+       material="t_target_visual_mat" class="push_t_visual"
+       pos="0.000672447 0.008409405 0"/>
+    </body>
+  </worldbody>
+</mujoco>

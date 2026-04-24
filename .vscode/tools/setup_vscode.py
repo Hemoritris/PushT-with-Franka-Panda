@@ -29,7 +29,7 @@ try:
 except ModuleNotFoundError or ImportError:
     # Create a parser to get the isaac-sim path
     parser = argparse.ArgumentParser(description="Setup the VSCode settings for the project.")
-    parser.add_argument("--isaac_path", type=str, help="The absolute path to the Isaac Sim installation.")
+    parser.add_argument("--isaac_path", type=str, help="Path to the Isaac Sim installation.")
     args = parser.parse_args()
 
     # parse the isaac-sim directory

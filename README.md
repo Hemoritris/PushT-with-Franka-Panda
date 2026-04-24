@@ -32,6 +32,13 @@ push_T/
 ├── assets/                                  # T block / target 资产
 ├── demonstrations/                          # 采集的数据 (如 push_t_demos.npz)
 ├── logs/                                    # 训练输出
+├── sim2sim/                                 # MuJoCo 跨环境验证
+│   ├── model/
+│   │   ├── push_t_scene.xml                 # Push-T MuJoCo 场景
+│   │   └── assets/                          # Panda / T block / target 的 MuJoCo 资产
+│   ├── mujoco_push_t_env.py                 # MuJoCo 低维环境封装
+│   ├── validate_policy.py                   # DDPM / DDIM 跨环境验证入口
+│   └── README.md                            # sim2sim 使用说明
 ├── scripts/
 │   ├── teleop/keyboard_teleop.py            # 键盘遥操作采集
 │   ├── diffusion/
@@ -353,7 +360,41 @@ python scripts/random_agent.py --task Template-Franka-Panda-Push-T-EePos-v0 --nu
 - 需要使用当前 teleop 脚本重新采集演示数据
 
 
-## 12. Notes
+## 12. MuJoCo sim2sim Validation
+
+仓库现已补充 `sim2sim/` 目录，用于将 Isaac Lab 中训练得到的策略迁移到 MuJoCo 中做跨环境验证。
+
+当前 MuJoCo 验证链路包括：
+
+- `sim2sim/model/push_t_scene.xml`：Push-T 场景
+- `sim2sim/mujoco_push_t_env.py`：MuJoCo 低维环境封装
+- `sim2sim/validate_policy.py`：加载 `DDPM / DDIM` checkpoint 并 rollout
+
+对齐原则：
+
+- 观测仍为 `t_block_xy + t_block_quat + ee_xy`（8维）
+- 动作仍为 `panda_hand` 的物理平面坐标 `[ee_x, ee_y]`（2维）
+- `panda_hand` 高度固定为 `0.13m`
+- 夹爪始终闭合
+
+示例：
+
+```bash
+python sim2sim/validate_policy.py \
+  --checkpoint logs/diffusion_policy/pushT_ddim/best_model.pt \
+  --model_xml sim2sim/model/push_t_scene.xml \
+  --episodes 1 \
+  --steps_per_episode 300 \
+  --execute_horizon 8 \
+  --deterministic_sampling \
+  --clamp_action \
+  --realtime
+```
+
+更多说明请见：`sim2sim/README.md`
+
+
+## 13. Notes
 
 - 当前主线逻辑演示数据 + Diffusion Policy。
 - 若后续要接入真实机械臂，请优先保持:
@@ -362,14 +403,15 @@ python scripts/random_agent.py --task Template-Franka-Panda-Push-T-EePos-v0 --nu
   - scheduler 与推理参数与训练配置匹配
 
 
-## 13. References
+## 14. References
 
 1. C. Chi, S. Feng, Y. Du, Z. Xu, E. Cousineau, B. Burchfiel, and S. Song, "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion," arXiv preprint arXiv:2303.04137 [cs.RO], 2023, doi: 10.48550/arXiv.2303.04137.
 
 2. Reference repository:
 
 - https://github.com/real-stanford/diffusion_policy
-
+- https://github.com/google-deepmind/mujoco
+- https://github.com/google-deepmind/mujoco_menagerie
 3. Learning Resources:
 
 - Diffusion Policy project page:
@@ -379,3 +421,4 @@ python scripts/random_agent.py --task Template-Franka-Panda-Push-T-EePos-v0 --nu
 - 【最适合入门的diffusion policy】https://www.bilibili.com/video/BV1MtXHYUE6M?vd_source=4d2ca99b593d2f2b9c234c77d695c78c
 - 【入门机器人Diffusion Policy】https://www.bilibili.com/video/BV1eGbceREsx?vd_source=4d2ca99b593d2f2b9c234c77d695c78c
 - 【扩散模型 - Diffusion Model【李宏毅2023】】https://www.bilibili.com/video/BV14c411J7f2?vd_source=4d2ca99b593d2f2b9c234c77d695c78c
+
