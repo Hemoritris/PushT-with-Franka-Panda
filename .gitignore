@@ -13,6 +13,11 @@
 **/*.usda
 **/*.usdc
 **/*.usdz
+!assets/
+!assets/**/*.usd
+!assets/**/*.usda
+!assets/**/*.usdc
+!assets/**/*.usdz
 
 # Python
 .DS_Store
@@ -57,6 +62,8 @@ _build
 **/runs/*
 **/logs/*
 **/recordings/*
+!logs/
+!logs/**
 
 # Pre-Trained Checkpoints
 /.pretrained_checkpoints/
