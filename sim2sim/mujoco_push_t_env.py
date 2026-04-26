@@ -101,11 +101,21 @@ class PushTTaskConfig:
     success_rotation_threshold: float = 0.07
     frame_skip: int = 2
     max_steps: int = 1200
-    ik_damping: float = 0.10
-    ik_step_size: float = 0.75
-    ik_orientation_weight: float = 0.60
+    ik_damping: float = 0.25
+    ik_step_size: float = 0.40
+    ik_orientation_weight: float = 0.35
+    ik_pos_weight_xy: float = 1.0
+    ik_pos_weight_z: float = 2.0
+    ik_regularization: float = 0.05
+    ik_max_joint_step: float = 0.08
     ik_reset_iterations: int = 100
-    ik_control_iterations: int = 30
+    ik_control_iterations: int = 16
+    # 控制侧动作平滑参数：默认启用，降低推挤冲击与高频抖动。
+    action_ema_alpha: float = 0.30
+    max_action_delta: float = 0.006
+    # 关节命令平滑：降低 IK 解在接触噪声下的高频抖动。
+    arm_command_ema_alpha: float = 0.50
+    arm_command_max_delta: float = 0.06
 
 
 class PandaHandIKController:
@@ -161,6 +171,7 @@ class PandaHandIKController:
         target_pos: np.ndarray,
         target_quat: np.ndarray,
         iterations: int,
+        reference_arm_qpos: np.ndarray | None = None,
     ) -> tuple[np.ndarray, dict[str, float]]:
         """迭代求解使 `panda_hand` 接近目标位姿的关节角。
 
@@ -179,7 +190,23 @@ class PandaHandIKController:
         # 使用 body Jacobian 对 `panda_hand` 进行位置和姿态控制。
         jac_pos = np.zeros((3, self.model.nv), dtype=np.float64)
         jac_rot = np.zeros((3, self.model.nv), dtype=np.float64)
-        damping_identity = np.eye(6, dtype=np.float64)
+        dof_identity = np.eye(len(self.arm_dof_adr), dtype=np.float64)
+        pos_weights = np.array(
+            [
+                float(self.task_cfg.ik_pos_weight_xy),
+                float(self.task_cfg.ik_pos_weight_xy),
+                float(self.task_cfg.ik_pos_weight_z),
+            ],
+            dtype=np.float64,
+        )
+        use_reference_regularization = reference_arm_qpos is not None
+        q_ref = (
+            np.asarray(reference_arm_qpos, dtype=np.float64).copy()
+            if use_reference_regularization
+            else self.scratch.qpos[self.arm_qpos_adr].copy()
+        )
+        q_ref[:] = np.clip(q_ref, self.arm_joint_limits[:, 0], self.arm_joint_limits[:, 1])
+        reg_coef = float(self.task_cfg.ik_regularization) if use_reference_regularization else 0.0
 
         for _ in range(max(1, iterations)):
             current_pos = self.scratch.xpos[self.hand_body_id].copy()
@@ -198,18 +225,28 @@ class PandaHandIKController:
                 break
 
             mujoco.mj_jacBody(self.model, self.scratch, jac_pos, jac_rot, self.hand_body_id)
+            weighted_jac_pos = pos_weights[:, None] * jac_pos[:, self.arm_dof_adr]
             reduced_jacobian = np.vstack(
                 [
-                    jac_pos[:, self.arm_dof_adr],
+                    weighted_jac_pos,
                     self.task_cfg.ik_orientation_weight * jac_rot[:, self.arm_dof_adr],
                 ]
             )
-            task_error = np.concatenate([pos_error, self.task_cfg.ik_orientation_weight * rot_error], dtype=np.float64)
-            system = reduced_jacobian @ reduced_jacobian.T + (self.task_cfg.ik_damping**2) * damping_identity
-            delta_q = reduced_jacobian.T @ np.linalg.solve(system, task_error)
+            task_error = np.concatenate(
+                [pos_weights * pos_error, self.task_cfg.ik_orientation_weight * rot_error],
+                dtype=np.float64,
+            )
+
+            current_arm_qpos = self.scratch.qpos[self.arm_qpos_adr].copy()
+            system = reduced_jacobian.T @ reduced_jacobian + (self.task_cfg.ik_damping**2 + reg_coef) * dof_identity
+            rhs = reduced_jacobian.T @ task_error + reg_coef * (q_ref - current_arm_qpos)
+            delta_q = np.linalg.solve(system, rhs)
+            max_joint_step = float(self.task_cfg.ik_max_joint_step)
+            if max_joint_step > 0:
+                delta_q = np.clip(delta_q, -max_joint_step, max_joint_step)
 
             # NumPy 高级索引返回副本，因此需要显式写回 scratch.qpos。
-            arm_qpos = self.scratch.qpos[self.arm_qpos_adr].copy()
+            arm_qpos = current_arm_qpos
             arm_qpos += self.task_cfg.ik_step_size * delta_q
             arm_qpos[:] = np.clip(arm_qpos, self.arm_joint_limits[:, 0], self.arm_joint_limits[:, 1])
             self.scratch.qpos[self.arm_qpos_adr] = arm_qpos
@@ -260,6 +297,7 @@ class MujocoPushTEnv:
         self.block_qpos_adr = int(self.model.jnt_qposadr[self.block_joint_id])
         self.step_count = 0
         self.last_action = np.zeros(2, dtype=np.float64)
+        self.arm_command_qpos = np.asarray(self.task_cfg.init_arm_qpos, dtype=np.float64).copy()
 
     @property
     def control_dt(self) -> float:
@@ -312,7 +350,8 @@ class MujocoPushTEnv:
 
         self.data.qpos[self.controller.arm_qpos_adr] = arm_qpos
         self.data.qvel[:] = 0
-        self.controller.set_ctrl(self.data, arm_qpos)
+        self.arm_command_qpos = arm_qpos.copy()
+        self.controller.set_ctrl(self.data, self.arm_command_qpos)
         mujoco.mj_forward(self.model, self.data)
 
         self.step_count = 0
@@ -359,22 +398,48 @@ class MujocoPushTEnv:
         clamped_action = action.copy()
         clamped_action[0] = np.clip(clamped_action[0], *self.task_cfg.action_x_range)
         clamped_action[1] = np.clip(clamped_action[1], *self.task_cfg.action_y_range)
-        target_pos = np.array([clamped_action[0], clamped_action[1], self.task_cfg.hand_target_z], dtype=np.float64)
+
+        # 使用 EMA + 单步增量限制抑制动作抖动，减少接触冲击。
+        filtered_action = (
+            float(self.task_cfg.action_ema_alpha) * clamped_action
+            + (1.0 - float(self.task_cfg.action_ema_alpha)) * self.last_action
+        )
+        max_delta = float(self.task_cfg.max_action_delta)
+        if max_delta > 0:
+            delta = np.clip(filtered_action - self.last_action, -max_delta, max_delta)
+            filtered_action = self.last_action + delta
+        target_pos = np.array([filtered_action[0], filtered_action[1], self.task_cfg.hand_target_z], dtype=np.float64)
 
         arm_qpos, ik_info = self.controller.solve(
             self.data.qpos.copy(),
             target_pos=target_pos,
             target_quat=self.controller.fixed_hand_quat,
             iterations=self.task_cfg.ik_control_iterations,
+            reference_arm_qpos=self.arm_command_qpos,
         )
-        self.controller.set_ctrl(self.data, arm_qpos)
+        # 关节目标再做一层平滑与限幅，避免接触扰动引发高频命令跳变。
+        smoothed_arm_qpos = (
+            float(self.task_cfg.arm_command_ema_alpha) * arm_qpos
+            + (1.0 - float(self.task_cfg.arm_command_ema_alpha)) * self.arm_command_qpos
+        )
+        max_arm_delta = float(self.task_cfg.arm_command_max_delta)
+        if max_arm_delta > 0:
+            arm_delta = np.clip(smoothed_arm_qpos - self.arm_command_qpos, -max_arm_delta, max_arm_delta)
+            smoothed_arm_qpos = self.arm_command_qpos + arm_delta
+        smoothed_arm_qpos[:] = np.clip(
+            smoothed_arm_qpos,
+            self.controller.arm_joint_limits[:, 0],
+            self.controller.arm_joint_limits[:, 1],
+        )
+        self.arm_command_qpos = smoothed_arm_qpos.copy()
+        self.controller.set_ctrl(self.data, self.arm_command_qpos)
 
         # 每个控制步推进若干个仿真子步。
         for _ in range(self.frame_skip):
             mujoco.mj_step(self.model, self.data)
 
         self.step_count += 1
-        self.last_action = clamped_action
+        self.last_action = filtered_action.copy()
         observation = self.get_observation()
         success, metrics = self.evaluate_success()
         terminated = success
@@ -382,7 +447,8 @@ class MujocoPushTEnv:
         info: dict[str, Any] = {
             "success": success,
             "step": self.step_count,
-            "action": clamped_action.astype(np.float32),
+            "action": filtered_action.astype(np.float32),
+            "raw_action": clamped_action.astype(np.float32),
             "time": float(self.data.time),
         }
         info.update(metrics)

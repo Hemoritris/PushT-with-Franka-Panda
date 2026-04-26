@@ -376,6 +376,10 @@ python scripts/random_agent.py --task Template-Franka-Panda-Push-T-EePos-v0 --nu
 - 动作仍为 `panda_hand` 的物理平面坐标 `[ee_x, ee_y]`（2维）
 - `panda_hand` 高度固定为 `0.13m`
 - 夹爪始终闭合
+- 默认启用动作与关节命令平滑，降低冲击与抖动
+
+当前场景配置要点（`sim2sim/model/push_t_scene.xml`）：
+
 
 示例：
 
@@ -384,14 +388,11 @@ python sim2sim/validate_policy.py \
   --checkpoint logs/diffusion_policy/pushT_ddim/best_model.pt \
   --model_xml sim2sim/model/push_t_scene.xml \
   --episodes 1 \
-  --steps_per_episode 300 \
-  --execute_horizon 8 \
+  --steps_per_episode 2000 \
   --deterministic_sampling \
-  --clamp_action \
   --realtime
 ```
 
-更多说明请见：`sim2sim/README.md`
 
 
 ## 13. Notes
@@ -400,6 +401,7 @@ python sim2sim/validate_policy.py \
 - 若后续要接入真实机械臂，请优先保持:
   - 动作语义一致 (物理坐标)
   - 观测语义一致 (训练/推理完全同构)
+  - 需要使用摄像头来捕获数据转义至与观测数据格式一致。
   - scheduler 与推理参数与训练配置匹配
 
 
